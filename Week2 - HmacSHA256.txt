@@ -1,0 +1,76 @@
+#####Message digest(Hashovanje)#####
+Napisemo poruku: 
+final String message = "Neka poruka";
+Biramo algoritam: 
+final MessageDigest md = MessageDigest.getInstance("SHA-256");
+Kreiramo hash verziju:
+final byte[] hashed = md.digest(message.getBytes(StandardCharsets.UTF_8));
+Stampamo hash:
+System.out.println(Agent.hex(hashed));
+
+#####HMAC#####
+Napisemo poruku: 
+final String message = "Neka poruka";
+Biramo algoritam:
+final Mac alice = Mac.getInstance("HmacSHA256");
+Bira se kljuc za Alice i Boba
+final Key key = KeyGenerator.getInstance("HmacSHA256").generateKey();
+Inicijalizujem HMAC i kreiram HMAC tag:
+alice.init(key);
+final byte[]tag1 = alice.doFinal(message.getBytes());
+Stampanje taga:
+System.out.println("HMAC: " + Agent.hex(tag1));
+
+//Bob verifikuje tag
+final Mac bob = Mac.getInstance("HmacSHA256");
+bob.init(key);
+final byte[] tag2 = bob.doFinal(message.getBytes(StandardCharsets.UTF_8));
+Jesu li isti:
+System.out.println(MessageDigest.isEqual(tag1, tag2));
+
+##### HMAC #####
+Nadjemo kljuc zajednicki koji ce nam trebat, pisemo u main-u:
+final Key key = KeyGenerator.getInstance("HmacSHA256").generateKey();
+//Alice
+final String text = "Neka poruka";
+final byte[] pt = text.getBytes();
+Biramo MAC algotitam sad:
+final Mac aliceMac = Mac.getInstance("HmacSHA256");
+aliceMac.init(key);
+Dobijemo tag:
+final byte[] tag = aliceMac.doFinal(pt);
+final int tagLen = aliceMac.getMacLength(); //duzina naseg hasha
+//Kreiramo poruku
+byte[] msg = new byte[tagLen+pt.length];
+System.arraycopy(tag,0,msg,0,tagLen);
+System.arraycopy(pt,0,msg,tagLen,pt.length);
+Posalji bobu:
+send("bob",msg);
+Thread.sleep(200);
+//Bob
+Primi poruku:
+byte[] received = receive("alice");
+Bira MAC algoritam, isti kao alice:
+final Mac bobMac = Mac.getInstance("HmacSHA256");
+bobMac.init(key);
+final int tagLen = bobMac.getMacLength();
+Provjera velicine je li isto:
+if (received.length < tagLen) {
+     System.out.println("[Bob] Invalid message format: too short.");
+}
+Kreiramo dvije promjenjive byte[] tipa za tag i poruku da odvojimo:
+byte[] tag = new byte[tagLen];
+byte[] message = new byte[received.length-tagLen];
+Popunjavamo tag i message(odvajamo ih):
+System.arraycopy(received,0,tag,0,tag.length);
+System.arraycopy(received, tagLen, message, 0, message.length);
+Sad bob pravi svoj tag od te poruke da provjeri je li ok ovaj sto je stigao:
+final byte[] tagCheck = bobMac.doFinal(message);
+Provjeravamo jesu li isti:
+if (MessageDigest.isEqual(tag, tagCheck)) {
+    System.out.println("[Bob] CORRECT ");
+} else {
+    System.out.println("[Bob]  Integrity FAIL! Message was modified.");
+}
+Thread.sleep(200);
+
