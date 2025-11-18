@@ -1,0 +1,77 @@
+#####AES CBC MODE#####
+
+prvo generisemo kljuc na vrhu u main:
+final Key key = KeyGenerator.getInstance("AES").generateKey();
+
+//Alice
+Kreiramo poruku: final String message = "nesto";
+Pretvorimo u bytes: final byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+Biramo cipher koji koristimo: 
+final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+cipher.init(Cipher.ENCRYPT_MODE,key);
+final byte[] encrypted = cipher.doFinal(messageBytes);
+final byte[] iv = cipher.getIv();
+Saljemo kome treba:
+send("bob",iv);
+send("bob",encrypted);
+
+//Bob
+Prima IV i sifrovanu poruku:
+final byte[] iv = receive("alice");
+final byte[] encrypted = receive("alice");
+Uzimamo cipher sa kojim desifrujemo, isti kao kod alice:
+final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+cipher.init(Cipher.DECRYPT_MODE,key,new IvParameterSpec(iv));
+final byte[] plainText = cipher.doFinal(encrypted);
+Stampamo rezultat:
+System.out.println("[Bob][DEC]: " + new String(plainText));
+
+#####AES CTR MODE#####
+//Alice
+Kreiramo poruku: final String message = "nesto";
+Pretvorimo u bytes: final byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+Biramo cipher koji koristimo: 
+final Cipher cipher = Cipher.getInstance("AES/CTR/NoPadding");
+cipher.init(Cipher.ENCRYPT_MODE,key);
+final byte[] encrypted = cipher.doFinal(messageBytes);
+final byte[] iv = cipher.getIv();
+Saljemo kome treba:
+send("bob",iv);
+send("bob",encrypted);
+//Bob
+Prima IV i sifrovanu poruku:
+final byte[] iv = receive("alice");
+final byte[] encrypted = receive("alice");
+Uzimamo cipher sa kojim desifrujemo, isti kao kod alice:
+final Cipher cipher = Cipher.getInstance("AES/CBC/NoPadding");
+cipher.init(Cipher.DECRYPT_MODE,key,new IvParameterSpec(iv));
+final byte[] plainText = cipher.doFinal(encrypted);
+Stampamo rezultat:
+System.out.println("[Bob][DEC]: " + new String(plainText));
+#####ChaCha20#####
+//Alice
+Kreiramo poruku: final String message = "nesto";
+Pretvorimo u bytes: final byte[] messageBytes = message.getBytes(StandardCharsets.UTF_8);
+Kreiramo nonce(!!!BITNO!!!):
+final byte[] nonce = new byte[12];
+new SecureRandom().nextBytes(nonce);
+final int counter = 0;
+Biramo cipher koji koristimo:
+final Cipher cipher = Cipher.getInstance("ChaCha20");
+cipher.init(Cipher.ENCRYPT_MODE,key,new ChaCha20ParameterSpec(nonce,counter));
+final byte[]ct = cipher.doFinal(messageBytes);
+Saljemo kome treba:
+send("bob",nonce);
+send("bob",ct);
+//Bob
+Prima nonce i sifrovanu poruku:
+final byte[] nonce = receive("alice");
+final byte[] messageReceived = receive("alice");
+Biramo cipher koji nam treba, isto kao kod alice:
+final Cipher cipher = Cipher.getInstance("ChaCha20");
+cipher.init(Cipher.DECRYPT_MODE,key,new ChaCha20ParameterSpec(nonce,0)); //0 vazda
+final byte[] pt = cipher.doFinal(messageReceived);
+
+
+
+
