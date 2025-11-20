@@ -1,0 +1,115 @@
+##### Key agreement DH #####
+//Alice
+Prvo pravimo key generator, pa generisemo kljuc:
+final KeyPairGenerator kpg = KeyPairGenerator.getInstance("DH");
+kpg.initialize(2048);
+final KeyPair keyPair = kpg.generateKeyPair();
+Saljemo bobu public key, to je (A=g^a) a privatni kljuc nam je a:
+final byte[] publicKey = keyPair.getPublic().getEncoded()
+send("bob",publicKey);
+PRIMAMO PK OD BOBA DA BI NAPRAVILI ZAJEDNICKI KLJUC:
+final X509EncodedKeySpec keySpec = new X509EncodedKeySpec(receive("bob"));
+final DHPublicKey bobPK = (DHPublicKey) KeyFactory.getInstance("DH").generatePublic(keySpec);
+Pokrecemo protokol da dobijemo zajednicku sifru(g^ab)
+final KeyAgreement dh = KeyAgreement.getInstance("DH");
+dh.init(keyPair.getPrivate());
+dh.doPhase(bobPK,true);
+Dobili smo zajednicku sifru:
+final byte[] sharedSecret = dh.generateSecret();
+Ako nam u zadatku trazi da od ove sifre dobijemo AES kljuc, nasa sifra ima 32B, AES treba 16B:
+final SecretKeySpec aesKey = new SecretKeySpec(sharedSecret,0,16,"AES");
+Sifrujemo standardno AES:
+final Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+aes.init(Cipher.ENCRYPT_MODE,aesKey);
+
+final byte[] ct = aes.doFinal("Hey bob, It's alice".getBytes());
+final byte[] iv = aes.getIV();
+send("bob",iv);
+send("bob",ct);
+
+//Bob
+Prima kljuc od Alice
+final X509EncodedKeySpec keySpec = new X509EncodedKeySpec(receive("alice"));
+final DHPublicKey alicePK = (DHPublicKey)KeyFactory.getInstance("DH").generatePublic(keySpec);
+final DHParameterSpec dhParamSpec = alicePK.getParams();
+Pravi svoj licni par PK i SK:
+final KeyPairGenerator kpg = KeyPairGenerator.getInstance("DH");
+kpg.initialize(dhParamSpec);
+final KeyPair keyPair = kpg.generateKeyPair();
+final byte[] publicKey = keyPair.getPublic().getEncoded();
+Saljemo public key alici
+send("alice",publicKey);
+Pokrecemo protokol za zajednicku sifru:
+final KeyAgreement dh = KeyAgreement.getInstance("DH");
+dh.init(keyPair.getPrivate());
+dh.doPhase(alicePK,true);
+Dobijamo zajednicku tajnu
+final byte[] sharedSecret = dh.generateSecret();
+Kreiramo AES kljuc:
+final SecretKeySpec aesKey = new SecretKeySpec(sharedSecret,0,16,"AES");
+Sifrujemo sa AES standardno:
+final Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+final byte[] iv = receive("alice");
+final byte[] ct = receive("alice");
+
+aes.init(Cipher.DECRYPT_MODE,aesKey,new GCMParameterSpec(128,iv));
+final byte[] pt = aes.doFinal(ct);
+
+##### Key agreement ECDH #####
+//Alice
+Prvo pravimo key generator, pa generisemo kljuc:
+final KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+kpg.initialize(256);
+final KeyPair keyPair = kpg.generateKeyPair();
+Saljemo bobu public key, to je (A=g^a) a privatni kljuc nam je a:
+final byte[] publicKey = keyPair.getPublic().getEncoded()
+send("bob",publicKey);
+PRIMAMO PK OD BOBA DA BI NAPRAVILI ZAJEDNICKI KLJUC:
+final X509EncodedKeySpec keySpec = new X509EncodedKeySpec(receive("bob"));
+final ECPublicKey bobPK = (ECPublicKey) KeyFactory.getInstance("EC").generatePublic(keySpec);
+Pokrecemo protokol da dobijemo zajednicku sifru(g^ab)
+final KeyAgreement dh = KeyAgreement.getInstance("ECDH");
+dh.init(keyPair.getPrivate());
+dh.doPhase(bobPK,true);
+Dobili smo zajednicku sifru:
+final byte[] sharedSecret = dh.generateSecret();
+Ako nam u zadatku trazi da od ove sifre dobijemo AES kljuc, nasa sifra ima 32B, AES treba 16B:
+final SecretKeySpec aesKey = new SecretKeySpec(sharedSecret,0,16,"AES");
+Sifrujemo standardno AES:
+final Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+aes.init(Cipher.ENCRYPT_MODE,aesKey);
+
+final byte[] ct = aes.doFinal("Hey bob, It's alice".getBytes());
+final byte[] iv = aes.getIV();
+send("bob",iv);
+send("bob",ct);
+
+//Bob
+Prima kljuc od Alice
+final X509EncodedKeySpec keySpec = new X509EncodedKeySpec(receive("alice"));
+final ECPublicKey alicePK = (ECPublicKey)KeyFactory.getInstance("EC").generatePublic(keySpec);
+final ECParameterSpec dhParamSpec = alicePK.getParams();
+Pravi svoj licni par PK i SK:
+final KeyPairGenerator kpg = KeyPairGenerator.getInstance("EC");
+kpg.initialize(dhParamSpec);
+final KeyPair keyPair = kpg.generateKeyPair();
+final byte[] publicKey = keyPair.getPublic().getEncoded();
+Saljemo public key alici
+send("alice",publicKey);
+Pokrecemo protokol za zajednicku sifru:
+final KeyAgreement dh = KeyAgreement.getInstance("ECDH");
+dh.init(keyPair.getPrivate());
+dh.doPhase(alicePK,true);
+Dobijamo zajednicku tajnu
+final byte[] sharedSecret = dh.generateSecret();
+Kreiramo AES kljuc:
+final SecretKeySpec aesKey = new SecretKeySpec(sharedSecret,0,16,"AES");
+Sifrujemo sa AES standardno:
+final Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+final byte[] iv = receive("alice");
+final byte[] ct = receive("alice");
+
+aes.init(Cipher.DECRYPT_MODE,aesKey,new GCMParameterSpec(128,iv));
+final byte[] pt = aes.doFinal(ct);
+
+
