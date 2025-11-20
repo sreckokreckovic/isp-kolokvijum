@@ -1,0 +1,47 @@
+##### AES-GCM ####
+U mainu dogovorimo kljuc:
+final Key key = KeyGenerator.getInstance("AES").generateKey();
+//Alice
+Prvo napisemo poruku:
+final String text = "I hope you get this message intact"
+Generisemo bajtove:
+final byte[] pt = text.getBytes(StandardCharsets.UTF_8);
+Biramo cipher koji koristimo:
+final Cipher encryption = Cipher.getInstance("AES/GCM/NoPAdding");
+encryption.init(Cipher.ENCRYPT_MODE,key);
+final byte[] ct = encryption.doFinal(pt);
+Saljemo bobu:
+send("bob",encryption.getIV());
+send("bob",ct);
+//Bob
+Primimo poruke:
+final byte[] receivedIv = receive("alice");
+final byte[] receivedCt = receive("alice");
+Biramo cipher i dekriptujemo:
+final Cipher decryption = Cipher.getInstance("AES/GCM/NoPadding");
+decryption.init(Cipher.DECRYPT_MODE,key,new GCMParameterSpec(128,receivedIv));
+Dobijemo rezultat:
+final byte[] dec = decryption.doFinal(receivedCt);
+##### RSA #####
+Na pocetku generisemo parove RSA kljuceva u mainu:
+final KeyPair aliceKP = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+final KeyPair bobKP = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+//Alice
+Kreiramo poruke i uzimamo bajtove poruke:
+final String text = "Hi,Bob.It's Alice";
+final byte[] textBytes = text.getBytes();
+Biramo cipher koji koristimo:
+final Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPPadding");
+cipher.init(Cipher.ENCRYPT_MODE,bobKP.getPublic());
+final byte[] encrypted = cipher.doFinal(textBytes);
+Saljemo bobu poruku:
+send("bob",encrypted);
+//Bob
+Prima poruku:
+final byte[] receivedCt = receive("alice");
+Bira cipher:
+final Cipher cipher = Cipher.getInstance("RSA/ECB/OAEPPadding");
+cipher.init(Cipher.DECRYPT_MODE,bobKP.getPrivate());
+I dobijamo poruku koju smo dekriptovali:
+final byte[] decrypted = cipher.doFinal(receivedCt);
+
