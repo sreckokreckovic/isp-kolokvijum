@@ -1,0 +1,68 @@
+Kada trazi mutually authenticate the peers and generate shared key, znaci moramo npr:
+Alice uzima A = g^a
+Potpise A sa svojim privatnim kljucem
+Posalje dalje prvo A pa onda i potpis i to se provjerava na drugoj strani
+ECDH forward secure
+
+primejr tokeni, proizvedi 1000 tokena i uzmi zadnji
+public static byte[] hash(int times, byte[] payload) throws Exception {
+    MessageDigest md = MessageDigest.getInstance("SHA-256");
+    byte[] out = payload;
+    for (int i = 0; i < times; i++) {
+        out = md.digest(out);
+    }
+    return out;
+}
+
+byte[] secret = "password123".getBytes();
+byte[] lastToken = hash(1000, secret);
+
+// AES-GCM encryption with shared key k
+Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+aes.init(Cipher.ENCRYPT_MODE, k);
+byte[] iv = aes.getIV();
+byte[] ct = aes.doFinal(lastToken);
+
+send("server", iv);
+send("server", ct);
+
+//nesto
+public static byte[] mac(byte[] payload, String password, byte[] salt) throws Exception {
+    // 1. PBKDF2WithHmacSHA256 iz password + salt → keyMaterial
+    SecretKeyFactory pbkdf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+    KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 1000, 256); // 256-bit key
+    SecretKey tmp = pbkdf.generateSecret(spec);
+
+    // 2. Napravi HMAC-SHA256 ključ iz keyMaterial
+    SecretKey key = new SecretKeySpec(tmp.getEncoded(), "HmacSHA256");
+
+    // 3. Izračunaj HMAC-SHA256(payload)
+    Mac h = Mac.getInstance("HmacSHA256");
+    h.init(key);
+    return h.doFinal(payload);
+}
+//moze pomoc
+byte[] AB = new byte[A.length + B.length];
+System.arraycopy(A, 0, AB, 0, A.length);
+System.arraycopy(B, 0, AB, A.length, B.length);
+
+Signature sign = Signature.getInstance("SHA256withRSA");
+sign.initSign(serverPrivateKey);
+sign.update(AB);
+
+byte[] signature = sign.sign();
+
+// send B, signature
+send("alice", B);
+send("alice", signature);
+
+//moze pomoc pt2 verif
+byte[] AB = new byte[A.length + B.length];
+System.arraycopy(A, 0, AB, 0, A.length);
+System.arraycopy(B, 0, AB, A.length, B.length);
+
+Signature verify = Signature.getInstance("SHA256withRSA");
+verify.initVerify(serverPublicKey);
+verify.update(AB);
+
+boolean valid = verify.verify(signatureFromServer);
