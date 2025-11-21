@@ -1,0 +1,183 @@
+package isp.keyagreement;
+
+import fri.isp.Agent;
+import fri.isp.Environment;
+
+import javax.crypto.*;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.*;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
+
+public class A1AgentCommunicationKeyExchange {
+
+    public static void main(String[] args) throws Exception {
+
+        /* =======================
+           GLOBAL CONFIGURATION
+        ========================= */
+        final KeyPairGenerator rsaGen = KeyPairGenerator.getInstance("RSA");
+        rsaGen.initialize(2048);
+        final KeyPair serverKeyPair = rsaGen.generateKeyPair();   // (pk, sk)
+        final PublicKey pk = serverKeyPair.getPublic();
+        final PrivateKey sk = serverKeyPair.getPrivate();
+
+        final String pwd = "correct horse battery staple";
+
+        final Environment env = new Environment();
+
+        /* =======================
+           ALICE
+        ========================= */
+        env.add(new Agent("alice") {
+            @Override
+            public void task() throws Exception {
+
+                /* 1. Generate ECDH key pair (Curve25519 recommended) */
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
+                KeyPair aliceKP = kpg.generateKeyPair();
+
+                byte[] A = aliceKP.getPublic().getEncoded();
+                send("server", A);
+
+                /* 2. Receive server public key B, signature σ, encrypted chall */
+                byte[] B = receive("server");
+                byte[] signature = receive("server");
+                byte[] iv1 = receive("server");
+                byte[] challEnc = receive("server");
+
+                /* 3. Verify signature σ = S(sk, A || B) */
+                Signature rsaVerify = Signature.getInstance("SHA256withRSA");
+                rsaVerify.initVerify(pk);
+                rsaVerify.update(A);
+                rsaVerify.update(B);
+
+                if (!rsaVerify.verify(signature)) {
+                    print("INVALID SIGNATURE → aborting");
+                    return;
+                }
+
+                /* 4. Compute shared secret k = H(B^a) */
+                KeyFactory kf = KeyFactory.getInstance("X25519");
+                PublicKey serverPub =
+                        kf.generatePublic(new X509EncodedKeySpec(B));
+
+                KeyAgreement ka = KeyAgreement.getInstance("X25519");
+                ka.init(aliceKP.getPrivate());
+                ka.doPhase(serverPub, true);
+                byte[] shared = ka.generateSecret();
+
+                MessageDigest sha = MessageDigest.getInstance("SHA-256");
+                byte[] kFull = sha.digest(shared);
+                byte[] k = Arrays.copyOf(kFull, 16);
+
+                /* 5. Decrypt challenge chall */
+                Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+                aes.init(Cipher.DECRYPT_MODE,
+                        new SecretKeySpec(k, "AES"),
+                        new GCMParameterSpec(128, iv1));
+                byte[] chall = aes.doFinal(challEnc);
+
+                /* 6. Compute response resp = H(pwd || chall) */
+                sha.reset();
+                sha.update(pwd.getBytes(StandardCharsets.UTF_8));
+                sha.update(chall);
+                byte[] resp = sha.digest();
+
+                /* 7. Encrypt resp and send */
+                Cipher aes2 = Cipher.getInstance("AES/GCM/NoPadding");
+                aes2.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(k, "AES"));
+                byte[] respEnc = aes2.doFinal(resp);
+                byte[] iv2 = aes2.getIV();
+
+                send("server", iv2);
+                send("server", respEnc);
+
+                print("Done → server authenticated, response sent.");
+            }
+        });
+
+        /* =======================
+           SERVER
+        ========================= */
+        env.add(new Agent("server") {
+            @Override
+            public void task() throws Exception {
+
+                /* 1. Receive A from Alice */
+                byte[] A = receive("alice");
+
+                /* 2. Generate ECDH key pair */
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
+                KeyPair serverKP = kpg.generateKeyPair();
+                byte[] B = serverKP.getPublic().getEncoded();
+
+                /* 3. Compute shared secret k = H(A^b) */
+                KeyFactory kf = KeyFactory.getInstance("X25519");
+                PublicKey alicePub =
+                        kf.generatePublic(new X509EncodedKeySpec(A));
+
+                KeyAgreement ka = KeyAgreement.getInstance("X25519");
+                ka.init(serverKP.getPrivate());
+                ka.doPhase(alicePub, true);
+                byte[] shared = ka.generateSecret();
+
+                MessageDigest sha = MessageDigest.getInstance("SHA-256");
+                byte[] kFull = sha.digest(shared);
+                byte[] k = Arrays.copyOf(kFull, 16);
+
+                /* 4. Sign σ = S(sk, A || B) */
+                Signature rsaSign = Signature.getInstance("SHA256withRSA");
+                rsaSign.initSign(sk);
+                rsaSign.update(A);
+                rsaSign.update(B);
+                byte[] signature = rsaSign.sign();
+
+                /* 5. Create challenge chall */
+                SecureRandom rnd = new SecureRandom();
+                byte[] chall = new byte[32];
+                rnd.nextBytes(chall);
+
+                /* 6. Encrypt chall with AES-GCM */
+                Cipher aes = Cipher.getInstance("AES/GCM/NoPadding");
+                aes.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(k, "AES"));
+                byte[] challEnc = aes.doFinal(chall);
+                byte[] iv1 = aes.getIV();
+
+                /* Send to Alice: B, σ, iv1, challEnc */
+                send("alice", B);
+                send("alice", signature);
+                send("alice", iv1);
+                send("alice", challEnc);
+
+                /* 7. Receive Alice’s response */
+                byte[] iv2 = receive("alice");
+                byte[] respEnc = receive("alice");
+
+                Cipher aes2 = Cipher.getInstance("AES/GCM/NoPadding");
+                aes2.init(Cipher.DECRYPT_MODE,
+                        new SecretKeySpec(k, "AES"),
+                        new GCMParameterSpec(128, iv2));
+
+                byte[] resp = aes2.doFinal(respEnc);
+
+                /* 8. Compute expected response */
+                sha.reset();
+                sha.update(pwd.getBytes(StandardCharsets.UTF_8));
+                sha.update(chall);
+                byte[] expected = sha.digest();
+
+                if (Arrays.equals(resp, expected)) {
+                    print("ALICE AUTHENTICATED ✔");
+                } else {
+                    print("Authentication failed.");
+                }
+            }
+        });
+
+        env.connect("alice", "server");
+        env.start();
+    }
+}
