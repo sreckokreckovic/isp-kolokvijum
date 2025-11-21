@@ -1,0 +1,171 @@
+package isp;
+
+import fri.isp.Agent;
+import fri.isp.Environment;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.*;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Arrays;
+
+public class A4_KeyAgreement_Full {
+    public static void main(String[] args) throws Exception {
+
+        final Environment env = new Environment();
+
+        // SERVER RSA KEYPAIR (normally loaded from keystore, ovdje generišemo)
+        KeyPairGenerator rsaGen = KeyPairGenerator.getInstance("RSA");
+        rsaGen.initialize(2048);
+        final KeyPair serverRSA = rsaGen.generateKeyPair();
+
+        env.add(new Agent("alice") {
+            @Override
+            public void task() throws Exception {
+
+                final byte[] password = "tajnaLozinka".getBytes();
+
+                // 1) Alice generiše X25519 keypair
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
+                KeyPair aliceKP = kpg.generateKeyPair();
+                PublicKey alicePub = aliceKP.getPublic();
+                PrivateKey alicePriv = aliceKP.getPrivate();
+
+                // šalje svoj public key
+                send("server", alicePub.getEncoded());
+
+                // 2) Alice prima serverov public key i potpis
+                byte[] serverPubBytes = receive("server");
+                byte[] signature = receive("server");
+
+                // rekonstruisanje server X25519 javnog ključa
+                KeyFactory kf = KeyFactory.getInstance("X25519");
+                PublicKey serverPub = kf.generatePublic(new X509EncodedKeySpec(serverPubBytes));
+
+                // 3) Verifikacija RSA potpisa (A || B)
+                Signature sig = Signature.getInstance("SHA256withRSA");
+                sig.initVerify(serverRSA.getPublic());
+                sig.update(alicePub.getEncoded());
+                sig.update(serverPubBytes);
+
+                if (!sig.verify(signature)) {
+                    System.out.println("[ALICE] RSA signature invalid. Abort.");
+                    return;
+                }
+
+                // 4) ECDH – dobij shared secret
+                KeyAgreement ka = KeyAgreement.getInstance("X25519");
+                ka.init(alicePriv);
+                ka.doPhase(serverPub, true);
+                byte[] shared = ka.generateSecret();
+
+                // derivacija AES ključa
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] hash = md.digest(shared);
+                SecretKeySpec aesKey = new SecretKeySpec(hash, 0, 16, "AES");
+
+                // 5) primi encChall + iv
+                byte[] encChall = receive("server");
+                byte[] iv = receive("server");
+
+                // dekripcija challenge-a
+                Cipher gcmDec = Cipher.getInstance("AES/GCM/NoPadding");
+                gcmDec.init(Cipher.DECRYPT_MODE, aesKey, new GCMParameterSpec(128, iv));
+                byte[] chall = gcmDec.doFinal(encChall);
+
+                // 6) napravi response = H(pwd || chall)
+                byte[] combined = new byte[password.length + chall.length];
+                System.arraycopy(password, 0, combined, 0, password.length);
+                System.arraycopy(chall, 0, combined, password.length, chall.length);
+
+                byte[] resp = MessageDigest.getInstance("SHA-256").digest(combined);
+
+                // 7) Pošalji response serveru
+                send("server", resp);
+
+                System.out.println("[ALICE] Sent correct response.");
+            }
+        });
+
+        env.add(new Agent("server") {
+            @Override
+            public void task() throws Exception {
+
+                final byte[] password = "tajnaLozinka".getBytes();
+
+                // 1) primi A javni ključ od Alice
+                byte[] alicePubBytes = receive("alice");
+
+                KeyFactory kf = KeyFactory.getInstance("X25519");
+                PublicKey alicePub = kf.generatePublic(new X509EncodedKeySpec(alicePubBytes));
+
+                // 2) Server generiše X25519 keypair
+                KeyPairGenerator kpg = KeyPairGenerator.getInstance("X25519");
+                KeyPair serverKP = kpg.generateKeyPair();
+                PublicKey serverPub = serverKP.getPublic();
+                PrivateKey serverPriv = serverKP.getPrivate();
+
+                // Pošalje B public key Alice-i
+                send("alice", serverPub.getEncoded());
+
+                // 3) Napravi RSA potpis A || B
+                Signature sig = Signature.getInstance("SHA256withRSA");
+                sig.initSign(serverRSA.getPrivate());
+                sig.update(alicePubBytes);
+                sig.update(serverPub.getEncoded());
+                byte[] signature = sig.sign();
+
+                send("alice", signature);
+
+                // 4) ECDH shared secret
+                KeyAgreement ka = KeyAgreement.getInstance("X25519");
+                ka.init(serverPriv);
+                ka.doPhase(alicePub, true);
+                byte[] shared = ka.generateSecret();
+
+                // derivacija AES ključa
+                MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] hash = md.digest(shared);
+                SecretKeySpec aesKey = new SecretKeySpec(hash, 0, 16, "AES");
+
+                // 5) generiši challenge
+                byte[] chall = new byte[32];
+                new SecureRandom().nextBytes(chall);
+
+                // 6) enkripcija challenge-a AES-GCM-om
+                Cipher gcmEnc = Cipher.getInstance("AES/GCM/NoPadding");
+                byte[] iv = new byte[12];
+                new SecureRandom().nextBytes(iv);
+
+                gcmEnc.init(Cipher.ENCRYPT_MODE, aesKey, new GCMParameterSpec(128, iv));
+                byte[] encChall = gcmEnc.doFinal(chall);
+
+                // pošalji encChall + iv
+                send("alice", encChall);
+                send("alice", iv);
+
+                // 7) primi response od Alice
+                byte[] respReceived = receive("alice");
+
+                // 8) server računa expected = H(pwd || chall)
+                byte[] combined = new byte[password.length + chall.length];
+                System.arraycopy(password, 0, combined, 0, password.length);
+                System.arraycopy(chall, 0, combined, password.length, chall.length);
+
+                byte[] expected = MessageDigest.getInstance("SHA-256").digest(combined);
+
+                // 9) provjera
+                if (MessageDigest.isEqual(expected, respReceived)) {
+                    System.out.println("[SERVER] Authentication OK.");
+                } else {
+                    System.out.println("[SERVER] Authentication FAIL.");
+                }
+            }
+        });
+
+        env.connect("alice", "server");
+        env.start();
+    }
+}
